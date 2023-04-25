@@ -14,6 +14,7 @@
 #include <string>
 #include <memory>
 #include <boost/asio.hpp>
+#include <boost/thread.hpp>
 
 using namespace boost::asio;
 using namespace boost::system;
@@ -28,8 +29,8 @@ std::string make_daytime_string()
 
 class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
 public:
-    TcpConnection(ip::tcp::socket socket)
-            : mSocket(std::move(socket)) {
+    explicit TcpConnection(ip::tcp::socket socket)
+            : socket_(std::move(socket)) {
     }
 
     void start() {
@@ -38,53 +39,67 @@ public:
 
 private:
     void asyncRead() {
-      async_read_until(mSocket, mBuffer, '\n',
-                       [&, self = shared_from_this()](const boost::system::error_code& error, size_t bytesTransferred) {
+      auto self = shared_from_this();
+      async_read_until(socket_, mBuffer, '\n',
+                       [&, self](const boost::system::error_code& error, size_t bytesTransferred) {
           if (!error) {
-            std::string message = std::string(boost::asio::buffers_begin(self->mBuffer.data()), boost::asio::buffers_begin(self->mBuffer.data()) + bytesTransferred);
+            std::string message = std::string(boost::asio::buffers_begin(self->mBuffer.data()),
+                                              boost::asio::buffers_begin(self->mBuffer.data())
+                                              + bytesTransferred);
             std::cout << "Received: " << message;
 
-            async_write(self->mSocket, buffer("You said: " + message), [this, self](const boost::system::error_code& error, size_t bytesTransferred) {
-                if (!error) {
-                  asyncRead();
-                } else {
-                  std::cerr << "Error writing to socket: " << error.message() << std::endl;
-                }
-
-            });
+            // todo: add mtx control for this
+            data_ = message;
+//            async_write(self->socket_, buffer("You said: " + message), [this](const boost::system::error_code& error, size_t bytesTransferred) {
+//                if (!error) {
+//                  asyncRead();
+//                } else {
+//                  std::cerr << "Error writing to socket: " << error.message() << std::endl;
+//                }
+//
+//            });
           } else {
             std::cerr << "Error reading from socket: " << error.message() << std::endl;
             // Close the connection if necessary
           }
-          mBuffer.consume(bytesTransferred);
+          mBuffer.consume(bytesTransferred); // consume the bytes from the buffer
+
+          if(!error)
+            this->asyncRead(); // restart the read operation with an emptied buffer
       });
     }
 
-    ip::tcp::socket mSocket;
+    boost::mutex mtx_;
+    std::string data_;
+    ip::tcp::socket socket_;
     boost::asio::streambuf mBuffer;
 };
 
 class TcpServer {
 public:
     TcpServer(io_service& ioService, short port)
-            : mAcceptor(ioService, ip::tcp::endpoint(ip::tcp::v4(), port)), mSocket(ioService) {
+            : connections_(),
+              acceptor_(ioService, ip::tcp::endpoint(ip::tcp::v4(), port)),
+              socket_(ioService) {
       startAccept();
     }
 
 private:
     void startAccept() {
-      mAcceptor.async_accept(mSocket, [this](const boost::system::error_code& error) {
+      acceptor_.async_accept(socket_, [this](const boost::system::error_code& error) {
           if (!error) {
             std::cout << "New connection accepted" << std::endl;
-            auto connection = std::make_shared<TcpConnection>(std::move(mSocket));
+            auto connection = std::make_shared<TcpConnection>(std::move(socket_));
             connection->start();
+            connections_.push_back(connection);
           }
           startAccept();
       });
     }
 
-    ip::tcp::acceptor mAcceptor;
-    ip::tcp::socket mSocket;
+    std::vector<std::shared_ptr<TcpConnection>> connections_;
+    ip::tcp::acceptor acceptor_;
+    ip::tcp::socket socket_;
 };
 
 int main() {
@@ -92,7 +107,17 @@ int main() {
 
   TcpServer server(ioService, 5555);
 
-  ioService.run(); // blocks here until all handlers have sorted themselves
+  boost::asio::io_service::work w(ioService);
+  boost::thread worker([&]()->void {
+      ioService.run(); // blocks here until all handlers have sorted themselves
+  });
 
+  std::cout << "Entering main loop " << std::endl;
+  while (1) {
+
+    sleep(1);
+  }
+
+  worker.join();
   return 0;
 }
