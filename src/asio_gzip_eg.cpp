@@ -40,6 +40,7 @@ public:
     std::string getData() {
       mtx_.lock();
       std::string re_data(data_);
+      data_.clear();
       mtx_.unlock();
       return re_data;
     }
@@ -139,6 +140,10 @@ int main() {
   std::cout << "Entering main loop " << std::endl;
   while (1) {
 
+    auto data = server.getCurrentData();
+    for(const auto & d: data)
+      if(!d.empty())
+        cout << "last available data: " << d << std::endl;
     sleep(1);
   }
 
