@@ -37,6 +37,13 @@ public:
       asyncRead();
     }
 
+    std::string getData() {
+      mtx_.lock();
+      std::string re_data(data_);
+      mtx_.unlock();
+      return re_data;
+    }
+
 private:
     void asyncRead() {
       auto self = shared_from_this();
@@ -49,7 +56,9 @@ private:
             std::cout << "Received: " << message;
 
             // todo: add mtx control for this
+            mtx_.lock();
             data_ = message;
+            mtx_.unlock();
 //            async_write(self->socket_, buffer("You said: " + message), [this](const boost::system::error_code& error, size_t bytesTransferred) {
 //                if (!error) {
 //                  asyncRead();
@@ -66,6 +75,12 @@ private:
 
           if(!error)
             this->asyncRead(); // restart the read operation with an emptied buffer
+          else{
+            socket_.cancel();
+            socket_.shutdown(boost::asio::ip::tcp::socket::shutdown_both);
+            if(socket_.is_open())
+              socket_.close();
+          }
       });
     }
 
@@ -82,6 +97,15 @@ public:
               acceptor_(ioService, ip::tcp::endpoint(ip::tcp::v4(), port)),
               socket_(ioService) {
       startAccept();
+    }
+
+    std::vector<std::string> getCurrentData() {
+      std::vector<std::string> ret_data;
+      ret_data.reserve(connections_.size());
+      for(const auto &c: connections_){
+        ret_data.push_back(c->getData());
+      }
+      return ret_data;
     }
 
 private:
