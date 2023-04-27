@@ -12,6 +12,9 @@
 #include <queue>
 #include <boost/asio.hpp>
 #include <boost/thread.hpp>
+#include <fstream>
+#include <boost/iostreams/filtering_stream.hpp>
+#include <boost/iostreams/filter/gzip.hpp>
 
 using namespace boost::asio;
 using namespace boost::system;
@@ -24,7 +27,7 @@ std::string make_daytime_string()
   return ctime(&now);
 }
 
-#define MAX_LEN 8 // emulate low bandwidth transmission medium
+#define MAX_LEN 750 // emulate low bandwidth transmission medium
 
 
 class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
@@ -169,9 +172,21 @@ int main() {
   std::cout << "Entering main loop " << std::endl;
 
   std::vector<std::shared_ptr<TcpConnection>> connections;
-
   // Load large amount of data here
-  const std::string to_send = "Start time of Server: " + make_daytime_string() + ". Let's goooooo";
+  std::ifstream input_file("nav_data.csv", std::ios::binary);
+  boost::iostreams::filtering_ostream gzip_stream;
+  std::stringstream compressed_data;
+  gzip_stream.push(boost::iostreams::gzip_compressor());
+  gzip_stream.push(compressed_data);
+
+  gzip_stream << input_file.rdbuf();
+
+//  const std::string to_send = "Start time of Server: " + make_daytime_string() + ". Let's goooooo";
+
+  const std::string to_send = compressed_data.str();
+
+  std::cout << "Data size: " << to_send.size() << " bytes\n";
+
   std::queue<std::string> q;
   size_t total_bytes_sent = 0;
   bool large_data_transfer = false;
@@ -216,7 +231,7 @@ int main() {
 //    if(!server.Send(make_daytime_string()))
 //      cout << "No requests for data received" << std::endl;
 
-    sleep(1);
+    usleep(100000);
   }
 
   worker.join();

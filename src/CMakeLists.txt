@@ -15,6 +15,9 @@ include_directories(${Boost_INCLUDE_DIRS})
 add_executable(gzip_eg gzip_eg.cpp)
 target_link_libraries(gzip_eg ${Boost_LIBRARIES})
 
+add_executable(gzip_decomp_eg gzip_decompression_eg.cpp)
+target_link_libraries(gzip_decomp_eg ${Boost_LIBRARIES})
+
 add_executable(asio_eg.o asio_datetime_str_server.cpp)
 target_link_libraries(asio_eg.o ${Boost_LIBRARIES})
 
