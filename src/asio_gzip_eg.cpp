@@ -1,18 +1,15 @@
 /*!
- * Modified example to send and receive data using a single socket for asynchronous operations (read, write & accept)
- *
+ * Modified example to send and receive data using a single socket for asynchronous operations (read & accept)
+ * but synchronous writing (user implemented)
  *
  *
  *
  * */
 
-
-
-
-
 #include <iostream>
 #include <string>
 #include <memory>
+#include <queue>
 #include <boost/asio.hpp>
 #include <boost/thread.hpp>
 
@@ -27,10 +24,13 @@ std::string make_daytime_string()
   return ctime(&now);
 }
 
+#define MAX_LEN 8 // emulate low bandwidth transmission medium
+
+
 class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
 public:
     explicit TcpConnection(ip::tcp::socket socket)
-            : socket_(std::move(socket)) {
+            : socket_(std::move(socket)), is_open_(true) {
     }
 
     void start() {
@@ -45,6 +45,22 @@ public:
       return re_data;
     }
 
+    //synchronous data write
+    size_t Send(const std::string& message) {
+      size_t written = 0;
+      if(is_open_) {
+        boost::system::error_code ec;
+        written = boost::asio::write(socket_, boost::asio::buffer(message), ec);
+        if(ec)
+          std::cout << "Error writing to socket: " << ec.message() << std::endl;
+      }
+      return written;
+    }
+
+    bool IsOpen() {
+      return is_open_;
+    }
+
 private:
     void asyncRead() {
       auto self = shared_from_this();
@@ -55,19 +71,9 @@ private:
                                               boost::asio::buffers_begin(self->mBuffer.data())
                                               + bytesTransferred);
             std::cout << "Received: " << message;
-
-            // todo: add mtx control for this
             mtx_.lock();
             data_ = message;
             mtx_.unlock();
-//            async_write(self->socket_, buffer("You said: " + message), [this](const boost::system::error_code& error, size_t bytesTransferred) {
-//                if (!error) {
-//                  asyncRead();
-//                } else {
-//                  std::cerr << "Error writing to socket: " << error.message() << std::endl;
-//                }
-//
-//            });
           } else {
             std::cerr << "Error reading from socket: " << error.message() << std::endl;
             // Close the connection if necessary
@@ -81,6 +87,7 @@ private:
             socket_.shutdown(boost::asio::ip::tcp::socket::shutdown_both);
             if(socket_.is_open())
               socket_.close();
+            is_open_ = false;
           }
       });
     }
@@ -89,6 +96,8 @@ private:
     std::string data_;
     ip::tcp::socket socket_;
     boost::asio::streambuf mBuffer;
+    std::atomic<bool> is_open_;
+    std::function<void(const std::string&)> callback_;
 };
 
 class TcpServer {
@@ -100,13 +109,33 @@ public:
       startAccept();
     }
 
-    std::vector<std::string> getCurrentData() {
-      std::vector<std::string> ret_data;
+    std::vector<std::pair<std::string, std::shared_ptr<TcpConnection>>> getCurrentData() {
+      std::vector<std::pair<std::string, std::shared_ptr<TcpConnection>>> ret_data;
       ret_data.reserve(connections_.size());
       for(const auto &c: connections_){
-        ret_data.push_back(c->getData());
+        ret_data.emplace_back(c->getData(), c);
       }
       return ret_data;
+    }
+
+    bool Send(const std::string &msg) {
+      bool ret_val = false;
+      for (const auto &p: connections_) {
+          if(p->Send(msg) != 0)
+            ret_val = true; // at least one connection sent data
+      }
+      return ret_val;
+    }
+
+    void removeClosedConnections () {
+      auto itr = connections_.begin();
+      while (itr != connections_.end()) {
+        if(!itr->get()->IsOpen()){
+          itr = connections_.erase(itr);
+          std::cout << "Connection closed, removing" << std::endl;
+        } else
+            ++itr;
+      }
     }
 
 private:
@@ -138,12 +167,55 @@ int main() {
   });
 
   std::cout << "Entering main loop " << std::endl;
+
+  std::vector<std::shared_ptr<TcpConnection>> connections;
+
+  // Load large amount of data here
+  const std::string to_send = "Start time of Server: " + make_daytime_string() + ". Let's goooooo";
+  std::queue<std::string> q;
+  size_t total_bytes_sent = 0;
+  bool large_data_transfer = false;
+
   while (1) {
+    // Remove any connections that have been closed
+    server.removeClosedConnections();
 
     auto data = server.getCurrentData();
     for(const auto & d: data)
-      if(!d.empty())
-        cout << "last available data: " << d << std::endl;
+      if(!d.first.empty()) {
+        cout << "last available data: " << d.first << std::endl;
+        if(d.first == "start\n") { // begin the data transmission of compressed data till all is sent properly
+          // lets grab the connection that asked for the data transmission
+          connections.push_back(d.second);
+          size_t offset = 0;
+          // split up the data into packets and place into a container to clear
+          while (offset < to_send.size()) {
+            size_t packet_size = std::min(static_cast<size_t>(MAX_LEN), to_send.size() - offset);
+            q.push(to_send.substr(offset, packet_size));
+            offset += packet_size;
+          }
+          large_data_transfer = true;
+        }
+      }
+
+    if(!q.empty()) {
+      auto msg = q.front();
+      cout << "Sending: " << msg << endl;
+      for(const auto & c: connections) {
+        total_bytes_sent+=c->Send(msg);
+      }
+      q.pop();
+    } else if(q.empty() && large_data_transfer) {
+      // we've finished, so we can clear it up and confirm the amount of data we wanted to send was sent
+      cout << "Data transferred: " << total_bytes_sent << ", expected size: " << to_send.size() << std::endl;
+      total_bytes_sent = 0; // reset
+      large_data_transfer = false;
+      connections.clear();
+    }
+
+//    if(!server.Send(make_daytime_string()))
+//      cout << "No requests for data received" << std::endl;
+
     sleep(1);
   }
 
