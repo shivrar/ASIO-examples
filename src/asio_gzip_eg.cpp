@@ -16,6 +16,7 @@
 #include <boost/iostreams/filtering_stream.hpp>
 #include <boost/iostreams/filter/gzip.hpp>
 #include <boost/iostreams/filter/bzip2.hpp>
+#include <boost/iostreams/filter/zlib.hpp>
 #include <boost/iostreams/filter/lzma.hpp>
 
 
@@ -179,7 +180,7 @@ int main() {
   std::ifstream input_file("nav_data.csv", std::ios::binary);
   boost::iostreams::filtering_ostream gzip_stream;
   std::stringstream compressed_data;
-  gzip_stream.push(boost::iostreams::gzip_compressor ());
+  gzip_stream.push(boost::iostreams::bzip2_compressor ());
   gzip_stream.push(compressed_data);
 
   gzip_stream << input_file.rdbuf();

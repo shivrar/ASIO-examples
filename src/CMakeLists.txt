@@ -11,8 +11,8 @@ add_compile_options(-std=c++11 -Wall -Wextra -Wpedantic)
 find_package(Boost REQUIRED COMPONENTS filesystem iostreams system thread)
 include_directories(${Boost_INCLUDE_DIRS})
 
+# Additional steps for linking other compressions that aren't built with the boost binaries.
 add_definitions(-DBOOST_IOSTREAMS_NO_LIB)
-
 set(LZMA_INCLUDE_DIR /usr/include/lzma)
 set(LZMA_LIB /usr/lib/x86_64-linux-gnu/liblzma.so)
 
